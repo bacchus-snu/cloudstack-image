@@ -44,10 +44,13 @@ jobs:
       - name: Install image tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends acl apparmor qemu-utils libguestfs-tools
+          sudo apt-get install -y --no-install-recommends apparmor isc-dhcp-client qemu-utils libguestfs-tools
           sudo apparmor_parser --replace .github/passt.apparmor
           sudo chmod a+r /boot/vmlinuz-*
-          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          printf 'KERNEL=="kvm", OWNER="%s", GROUP="kvm", MODE="0660"\n' "$(id -u)" | sudo tee /etc/udev/rules.d/99-cloudstack-image-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --action=add --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
       - name: Build qcow2
         env:
           PROFILE: ${{ matrix.profile }}

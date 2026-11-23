@@ -118,13 +118,14 @@ WantedBy=multi-user.target
 '
 
 export LIBGUESTFS_BACKEND=direct
+export LIBGUESTFS_BACKEND_SETTINGS=force_kvm
 qemu-img resize "$IMG_NAME" 16G
 virt-customize --verbose --memsize 4096 --smp 2 -a "$IMG_NAME" \
   --run-command 'growpart /dev/sda 1 && resize2fs /dev/sda1' \
-  --run-command 'apt-get update' \
+  --run-command 'apt-get update --error-on=any' \
   --run-command "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends linux-modules-nvidia-${DRIVER}-server${DRIVER_SUFFIX}-generic nvidia-headless-no-dkms-${DRIVER}-server${DRIVER_SUFFIX} nvidia-utils-${DRIVER}-server" \
   --upload cuda-keyring.deb:/tmp/cuda-keyring.deb \
-  --run-command 'dpkg -i /tmp/cuda-keyring.deb && rm /tmp/cuda-keyring.deb && apt-get update' \
+  --run-command 'dpkg -i /tmp/cuda-keyring.deb && rm /tmp/cuda-keyring.deb && apt-get update --error-on=any' \
   --run-command "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary datacenter-gpu-manager-exporter=${DCGM_EXPORTER_VERSION} && apt-mark hold datacenter-gpu-manager-exporter" \
   --upload vmagent-prod:/usr/local/bin/vmagent \
   --mkdir /etc/vmagent \
