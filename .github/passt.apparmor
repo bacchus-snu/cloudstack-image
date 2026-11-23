@@ -1,0 +1,7 @@
+abi <abi/3.0>,
+include <tunables/global>
+
+profile passt /usr/bin/passt{,.avx2} {
+  include <abstractions/passt>
+  owner /run/user/[0-9]*/libguestfs*/passt* rw,
+}
