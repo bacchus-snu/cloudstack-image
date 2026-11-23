@@ -49,7 +49,9 @@ jobs:
           sudo chmod a+r /boot/vmlinuz-*
           printf 'KERNEL=="kvm", OWNER="%s", GROUP="kvm", MODE="0660"\n' "$(id -u)" | sudo tee /etc/udev/rules.d/99-cloudstack-image-kvm.rules
           sudo udevadm control --reload-rules
-          sudo udevadm trigger --action=add --name-match=kvm
+          sudo udevadm trigger --action=add --name-match=/dev/kvm
+          sudo udevadm settle --timeout=30
+          stat -c '%A %U:%G' /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
       - name: Build qcow2
         env:
