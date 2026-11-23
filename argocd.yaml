@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudstack-images
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    name: in-cluster
+    namespace: cloudstack-images
+  source:
+    repoURL: https://github.com/bacchus-snu/cloudstack-image.git
+    targetRevision: main
+    path: k8s
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

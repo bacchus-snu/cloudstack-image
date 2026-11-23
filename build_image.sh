@@ -51,11 +51,6 @@ done
 : "${DEST:?--dest is required}"
 : "${DRIVER:?--driver is required}"
 
-if ((EUID != 0)); then
-  echo "Run this script as root." >&2
-  exit 1
-fi
-
 case "$DRIVER_FLAVOR" in
   open) DRIVER_SUFFIX=-open ;;
   proprietary) DRIVER_SUFFIX= ;;
@@ -84,14 +79,14 @@ cd "$WORK_DIR"
 VMUTILS="vmutils-linux-amd64-$VMAGENT_VERSION"
 VMUTILS_URL="https://github.com/VictoriaMetrics/VictoriaMetrics/releases/download/$VMAGENT_VERSION"
 
-wget -O "$IMG_NAME" "$SOURCE"
-wget -O SHA256SUMS "$BASE_URL/SHA256SUMS"
+wget --no-verbose -O "$IMG_NAME" "$SOURCE"
+wget --no-verbose -O SHA256SUMS "$BASE_URL/SHA256SUMS"
 awk -v name="$IMG_NAME" '$2 == name || $2 == "*" name { print; found=1 } END { if (!found) exit 1 }' SHA256SUMS >source.sha256
 sha256sum -c source.sha256
 
-wget -O cuda-keyring.deb "$CUDA_REPO/$CUDA_KEYRING"
-wget -O "$VMUTILS.tar.gz" "$VMUTILS_URL/$VMUTILS.tar.gz"
-wget -O "${VMUTILS}_checksums.txt" "$VMUTILS_URL/${VMUTILS}_checksums.txt"
+wget --no-verbose -O cuda-keyring.deb "$CUDA_REPO/$CUDA_KEYRING"
+wget --no-verbose -O "$VMUTILS.tar.gz" "$VMUTILS_URL/$VMUTILS.tar.gz"
+wget --no-verbose -O "${VMUTILS}_checksums.txt" "$VMUTILS_URL/${VMUTILS}_checksums.txt"
 awk -v name="$VMUTILS.tar.gz" '$2 == name || $2 == "*" name { print; found=1 } END { if (!found) exit 1 }' "${VMUTILS}_checksums.txt" >vmutils.sha256
 sha256sum -c vmutils.sha256
 tar -xzf "$VMUTILS.tar.gz" --no-same-owner vmagent-prod

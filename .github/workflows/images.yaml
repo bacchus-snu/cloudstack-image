@@ -3,7 +3,17 @@ name: Build and publish images
 on:
   push:
     branches: [main]
+    paths:
+      - .github/**
+      - build_image.sh
+      - deploy.sh
+      - publish.py
   pull_request:
+    paths:
+      - .github/**
+      - build_image.sh
+      - deploy.sh
+      - publish.py
   workflow_dispatch:
 
 permissions:
@@ -34,11 +44,13 @@ jobs:
       - name: Install image tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-utils libguestfs-tools
+          sudo apt-get install -y --no-install-recommends acl qemu-utils libguestfs-tools
+          sudo chmod a+r /boot/vmlinuz-*
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
       - name: Build qcow2
         env:
           PROFILE: ${{ matrix.profile }}
-        run: sudo ./deploy.sh "$PROFILE" "out/bacchus-ubuntu-26.04-$PROFILE.qcow2"
+        run: ./deploy.sh "$PROFILE" "out/bacchus-ubuntu-26.04-$PROFILE.qcow2"
       - name: Publish image
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
