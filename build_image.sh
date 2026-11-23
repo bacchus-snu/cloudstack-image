@@ -51,6 +51,11 @@ done
 : "${DEST:?--dest is required}"
 : "${DRIVER:?--driver is required}"
 
+if ((EUID != 0)); then
+  echo "Run this script as root." >&2
+  exit 1
+fi
+
 case "$DRIVER_FLAVOR" in
   open) DRIVER_SUFFIX=-open ;;
   proprietary) DRIVER_SUFFIX= ;;
@@ -73,7 +78,18 @@ fi
 DEST=$(realpath -m "$DEST")
 mkdir -p "$(dirname "$DEST")"
 WORK_DIR=$(mktemp -d)
-trap 'rm -rf "$WORK_DIR"' EXIT
+ROOT_DIR="$WORK_DIR/root"
+LOOP_DEVICE=
+cleanup() {
+  if mountpoint -q "$ROOT_DIR"; then
+    umount -R "$ROOT_DIR"
+  fi
+  if [[ -n $LOOP_DEVICE ]]; then
+    losetup --detach "$LOOP_DEVICE"
+  fi
+  rm -rf "$WORK_DIR"
+}
+trap cleanup EXIT
 cd "$WORK_DIR"
 
 VMUTILS="vmutils-linux-amd64-$VMAGENT_VERSION"
@@ -117,26 +133,64 @@ RestartSec=10s
 WantedBy=multi-user.target
 '
 
-export LIBGUESTFS_BACKEND=direct
-export LIBGUESTFS_BACKEND_SETTINGS=force_kvm
-qemu-img resize "$IMG_NAME" 16G
-virt-customize --verbose --memsize 4096 --smp 2 -a "$IMG_NAME" \
-  --run-command 'growpart /dev/sda 1 && resize2fs /dev/sda1' \
-  --run-command 'apt-get update --error-on=any' \
-  --run-command "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends linux-modules-nvidia-${DRIVER}-server${DRIVER_SUFFIX}-generic nvidia-headless-no-dkms-${DRIVER}-server${DRIVER_SUFFIX} nvidia-utils-${DRIVER}-server" \
-  --upload cuda-keyring.deb:/tmp/cuda-keyring.deb \
-  --run-command 'dpkg -i /tmp/cuda-keyring.deb && rm /tmp/cuda-keyring.deb && apt-get update --error-on=any' \
-  --run-command "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary datacenter-gpu-manager-exporter=${DCGM_EXPORTER_VERSION} && apt-mark hold datacenter-gpu-manager-exporter" \
-  --upload vmagent-prod:/usr/local/bin/vmagent \
-  --mkdir /etc/vmagent \
-  --write "/etc/vmagent/scrape.yml:$VMAGENT_SCRAPE" \
-  --write "/etc/systemd/system/vmagent.service:$VMAGENT_UNIT" \
-  --run-command 'useradd --system --no-create-home --shell /usr/sbin/nologin vmagent' \
-  --run-command 'systemctl enable nvidia-dcgm.service nvidia-dcgm-exporter.service vmagent.service' \
-  --run-command 'apt-get clean && cloud-init clean --logs' \
-  --truncate /etc/machine-id
+qemu-img convert -f qcow2 -O raw "$IMG_NAME" work.raw
+rm "$IMG_NAME"
+qemu-img resize -f raw work.raw 16G
+LOOP_DEVICE=$(losetup --find --show --partscan "$WORK_DIR/work.raw")
+udevadm settle --timeout=30
+growpart "$LOOP_DEVICE" 1
+udevadm settle --timeout=30
+BOOT_DEVICE=$(lsblk --raw --noheadings --paths --output NAME,LABEL "$LOOP_DEVICE" | awk '$2 == "BOOT" {print $1}')
+EFI_DEVICE=$(lsblk --raw --noheadings --paths --output NAME,LABEL "$LOOP_DEVICE" | awk '$2 == "UEFI" {print $1}')
+: "${BOOT_DEVICE:?Image must contain a BOOT partition}"
+: "${EFI_DEVICE:?Image must contain a UEFI partition}"
 
-TMPDIR="$WORK_DIR" virt-sparsify --memsize 4096 --compress --convert qcow2 "$IMG_NAME" "$DEST"
+mkdir "$ROOT_DIR"
+mount "${LOOP_DEVICE}p1" "$ROOT_DIR"
+resize2fs "${LOOP_DEVICE}p1"
+mount "$BOOT_DEVICE" "$ROOT_DIR/boot"
+mount "$EFI_DEVICE" "$ROOT_DIR/boot/efi"
+mount --rbind /dev "$ROOT_DIR/dev"
+mount --make-rslave "$ROOT_DIR/dev"
+mount -t proc proc "$ROOT_DIR/proc"
+mount -t sysfs sysfs "$ROOT_DIR/sys"
+cp -a "$ROOT_DIR/etc/resolv.conf" resolv.conf
+rm "$ROOT_DIR/etc/resolv.conf"
+cp -L /etc/resolv.conf "$ROOT_DIR/etc/resolv.conf"
+printf '#!/bin/sh\nexit 101\n' >"$ROOT_DIR/usr/sbin/policy-rc.d"
+chmod 755 "$ROOT_DIR/usr/sbin/policy-rc.d"
+
+export DEBIAN_FRONTEND=noninteractive SYSTEMD_OFFLINE=1
+chroot "$ROOT_DIR" apt-get update --error-on=any
+chroot "$ROOT_DIR" apt-get install -y --no-install-recommends \
+  "linux-modules-nvidia-${DRIVER}-server${DRIVER_SUFFIX}-generic" \
+  "nvidia-headless-no-dkms-${DRIVER}-server${DRIVER_SUFFIX}" \
+  "nvidia-utils-${DRIVER}-server"
+install -m 644 cuda-keyring.deb "$ROOT_DIR/tmp/cuda-keyring.deb"
+chroot "$ROOT_DIR" dpkg -i /tmp/cuda-keyring.deb
+rm "$ROOT_DIR/tmp/cuda-keyring.deb"
+chroot "$ROOT_DIR" apt-get update --error-on=any
+chroot "$ROOT_DIR" apt-get install -y --no-install-recommends \
+  datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary \
+  "datacenter-gpu-manager-exporter=$DCGM_EXPORTER_VERSION"
+chroot "$ROOT_DIR" apt-mark hold datacenter-gpu-manager-exporter
+install -m 755 vmagent-prod "$ROOT_DIR/usr/local/bin/vmagent"
+mkdir -p "$ROOT_DIR/etc/vmagent"
+printf '%s' "$VMAGENT_SCRAPE" >"$ROOT_DIR/etc/vmagent/scrape.yml"
+printf '%s' "$VMAGENT_UNIT" >"$ROOT_DIR/etc/systemd/system/vmagent.service"
+chroot "$ROOT_DIR" useradd --system --no-create-home --shell /usr/sbin/nologin vmagent
+chroot "$ROOT_DIR" systemctl enable nvidia-dcgm.service nvidia-dcgm-exporter.service vmagent.service
+chroot "$ROOT_DIR" apt-get clean
+chroot "$ROOT_DIR" cloud-init clean --logs
+truncate -s 0 "$ROOT_DIR/etc/machine-id"
+rm "$ROOT_DIR/usr/sbin/policy-rc.d" "$ROOT_DIR/etc/resolv.conf"
+cp -a resolv.conf "$ROOT_DIR/etc/resolv.conf"
+fstrim "$ROOT_DIR"
+umount -R "$ROOT_DIR"
+losetup --detach "$LOOP_DEVICE"
+LOOP_DEVICE=
+
+qemu-img convert -f raw -O qcow2 -c work.raw "$DEST"
 qemu-img check "$DEST"
 cd "$(dirname "$DEST")"
 sha256sum "$(basename "$DEST")" >"$DEST.sha256"
