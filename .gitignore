@@ -1,0 +1,4 @@
+out/
+__pycache__/
+*.qcow2
+*.qcow2.sha256
