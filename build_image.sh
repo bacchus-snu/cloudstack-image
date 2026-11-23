@@ -124,7 +124,7 @@ WantedBy=multi-user.target
 
 export LIBGUESTFS_BACKEND=direct
 qemu-img resize "$IMG_NAME" 16G
-virt-customize --memsize 4096 --smp 2 -a "$IMG_NAME" \
+virt-customize --verbose --memsize 4096 --smp 2 -a "$IMG_NAME" \
   --run-command 'growpart /dev/sda 1 && resize2fs /dev/sda1' \
   --run-command 'apt-get update' \
   --run-command "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends linux-modules-nvidia-${DRIVER}-server${DRIVER_SUFFIX}-generic nvidia-headless-no-dkms-${DRIVER}-server${DRIVER_SUFFIX} nvidia-utils-${DRIVER}-server" \
