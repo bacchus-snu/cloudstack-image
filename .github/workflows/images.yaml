@@ -15,6 +15,11 @@ on:
       - deploy.sh
       - publish.py
   workflow_dispatch:
+    inputs:
+      cleanup_only:
+        description: Purge superseded S3 builds without building images
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -28,6 +33,7 @@ concurrency:
 
 jobs:
   build:
+    if: ${{ !inputs.cleanup_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -75,19 +81,21 @@ jobs:
           retention-days: 7
 
   catalog:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (needs.build.result == 'success' || inputs.cleanup_only)
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
+        if: ${{ !inputs.cleanup_only }}
         with:
           pattern: catalog-*
           path: out
           merge-multiple: true
-      - name: Publish template catalog
+      - name: Publish template catalog and purge superseded builds
         env:
+          CLEANUP_ONLY: ${{ inputs.cleanup_only }}
           IMAGE_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
@@ -97,4 +105,8 @@ jobs:
           PUBLIC_URL: ${{ vars.PUBLIC_URL }}
           AWS_REQUEST_CHECKSUM_CALCULATION: when_required
           AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-        run: python3 publish.py catalog out
+        run: |
+          if [ "$CLEANUP_ONLY" != true ]; then
+            python3 publish.py catalog out
+          fi
+          python3 publish.py prune --apply
